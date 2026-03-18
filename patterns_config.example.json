@@ -1,0 +1,7 @@
+{
+  "custom_patterns": {
+    "Internal Token": "INT_[A-Z0-9]{24}",
+    "Company Secret": "SECRET_[A-Za-z0-9_-]{16,}",
+    "Example API Key": "APIKEY_[A-Za-z0-9]{20,}"
+  }
+}
