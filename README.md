@@ -1,6 +1,6 @@
-# GitHubReconScanner
+# Github Recon Scanner
 
-Ethical GitHub reconnaissance scanner for identifying potentially sensitive data in public repositories.
+GitHub reconnaissance scanner for identifying potentially sensitive data in public repositories.
 
 ## Install
 
