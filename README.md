@@ -25,6 +25,8 @@ export GITHUB_TOKEN="YOUR_TOKEN"
 python github_recon_scanner.py --token "$GITHUB_TOKEN" --repo owner/repo --verbose
 ```
 
+If you do not provide a token, the scanner still runs with public unauthenticated GitHub API access, but you should expect stricter rate limits, slower scans, and lower coverage on larger targets.
+
 ## Usage
 
 ```bash
@@ -150,7 +152,7 @@ Alternate config format (compatible with `--config`):
 }
 ```
 
-## Ethical Use
+## Responsible Use
 
 - Scan only authorized targets and public data.
 - Follow bug bounty scope and GitHub Terms of Service.
