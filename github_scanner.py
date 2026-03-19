@@ -110,6 +110,20 @@ COMMON_FILENAME_INDICATORS = [
     ".htpasswd",
 ]
 
+TEXT_LIKE_FILE_EXTENSIONS = {
+    ".txt", ".md", ".rst", ".adoc", ".env", ".cfg", ".conf", ".config", ".ini",
+    ".json", ".jsonl", ".yaml", ".yml", ".toml", ".properties", ".xml", ".html",
+    ".htm", ".xhtml", ".svg", ".css", ".scss", ".less", ".js", ".mjs", ".cjs",
+    ".ts", ".tsx", ".jsx", ".py", ".rb", ".php", ".java", ".kt", ".kts", ".go",
+    ".rs", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".swift", ".sql", ".sh",
+    ".bash", ".zsh", ".ps1", ".bat", ".cmd", ".dockerfile",
+}
+
+TEXT_LIKE_FILENAMES = {
+    "readme", "license", "notice", "changelog", "changes", "hosts", "cname",
+    ".gitignore", ".env", ".npmrc", "dockerfile", "compose.yml", "compose.yaml",
+}
+
 
 class RateLimiter:
     def __init__(self, min_interval_seconds: float):
@@ -498,6 +512,18 @@ def extract_subdomains_from_text(text: str, domain: str) -> List[str]:
     regex = build_subdomain_regex(normalized_domain)
     matches = {m.group(1).lower().rstrip(".") for m in regex.finditer(str(text or ""))}
     return sorted([m for m in matches if m != normalized_domain])
+
+
+def is_probably_text_path(path: str) -> bool:
+    p = Path(str(path or ""))
+    suffix = p.suffix.lower()
+    if suffix in TEXT_LIKE_FILE_EXTENSIONS:
+        return True
+    name = p.name.lower()
+    stem = p.stem.lower()
+    if name in TEXT_LIKE_FILENAMES or stem in TEXT_LIKE_FILENAMES:
+        return True
+    return "." not in name
 
 
 def finding_sort_key(finding: Dict[str, Any]) -> Tuple[float, int]:
@@ -1342,20 +1368,115 @@ class GitHubReconScanner:
                     LOG.error("Repo scan failed for %s: %s", repo, exc)
         return sorted(findings, key=finding_sort_key, reverse=True)
 
-    def discover_subdomains(self, domain: str) -> List[Dict[str, Any]]:
-        normalized_domain = normalize_domain(domain)
-        if not normalized_domain:
-            return []
+    def _add_subdomain_finding(
+        self,
+        findings_by_host: Dict[str, Dict[str, Any]],
+        domain: str,
+        hostname: str,
+        repo: str,
+        path: str,
+        line_number: Optional[int],
+        matched_line: str,
+        html_url: str,
+        query_rule: str,
+        query: str,
+        observed_at: Optional[str] = None,
+        commit_sha: Optional[str] = None,
+        pr_number: Optional[int] = None,
+        issue_number: Optional[int] = None,
+    ) -> None:
+        existing = findings_by_host.get(hostname)
+        if existing:
+            existing["occurrences"] = int(existing.get("occurrences", 1)) + 1
+            if not existing.get("observed_at") and observed_at:
+                existing["observed_at"] = observed_at
+            self._last_subdomain_results = sorted(
+                findings_by_host.values(),
+                key=lambda item: str(item.get("matched_value", "")),
+            )
+            return
 
-        findings_by_host: Dict[str, Dict[str, Any]] = {}
-        remaining_fetches = self.max_file_fetches
-        queries = [
-            f'"{normalized_domain}"',
-            f'"https://{normalized_domain}"',
-            f'"http://{normalized_domain}"',
+        finding = {
+            "type": "subdomain",
+            "rule": "Discovered Subdomain",
+            "score": 100,
+            "repo": repo,
+            "path": path,
+            "line_number": line_number,
+            "commit_sha": commit_sha,
+            "pr_number": pr_number,
+            "issue_number": issue_number,
+            "matched_value": hostname,
+            "matched_line": matched_line.strip()[:500],
+            "query_rule": query_rule,
+            "query": query,
+            "html_url": html_url,
+            "possible_contains": f"Subdomain of {domain}",
+            "why_flagged": f"Discovered hostname ending in {domain} from GitHub data",
+            "observed_at": observed_at,
+            "occurrences": 1,
+        }
+        findings_by_host[hostname] = finding
+        self._last_subdomain_results = sorted(
+            findings_by_host.values(),
+            key=lambda item: str(item.get("matched_value", "")),
+        )
+        if self.stream_to_stdout:
+            print(hostname, flush=True)
+
+    def _record_subdomains_from_text(
+        self,
+        findings_by_host: Dict[str, Dict[str, Any]],
+        domain: str,
+        repo: str,
+        path: str,
+        text: str,
+        html_url: str,
+        query_rule: str,
+        query: str,
+        observed_at: Optional[str] = None,
+        commit_sha: Optional[str] = None,
+        pr_number: Optional[int] = None,
+        issue_number: Optional[int] = None,
+    ) -> None:
+        if not text:
+            return
+        for line_no, line in enumerate(str(text).splitlines(), start=1):
+            for hostname in extract_subdomains_from_text(line, domain):
+                self._add_subdomain_finding(
+                    findings_by_host=findings_by_host,
+                    domain=domain,
+                    hostname=hostname,
+                    repo=repo,
+                    path=path,
+                    line_number=line_no,
+                    matched_line=line,
+                    html_url=html_url,
+                    query_rule=query_rule,
+                    query=query,
+                    observed_at=observed_at,
+                    commit_sha=commit_sha,
+                    pr_number=pr_number,
+                    issue_number=issue_number,
+                )
+
+    def _discover_subdomains_via_code_search(
+        self,
+        domain: str,
+        findings_by_host: Dict[str, Dict[str, Any]],
+        query_prefix: str = "",
+    ) -> None:
+        remaining_fetches = max(0, self.max_file_fetches)
+        query_terms = [
+            f'"{domain}"',
+            f'"https://{domain}"',
+            f'"http://{domain}"',
+            f'".{domain}"',
+            f'"*.{domain}"',
         ]
+        queries = [f"{query_prefix}{term}".strip() for term in query_terms]
 
-        for query in queries:
+        for query in dict.fromkeys(queries):
             page = 1
             seen_item_keys = set()
             while True:
@@ -1389,43 +1510,413 @@ class GitHubReconScanner:
 
                     html_url = item.get("html_url") or ""
                     for line_no, line in enumerate(lines, start=1):
-                        for hostname in extract_subdomains_from_text(line, normalized_domain):
-                            existing = findings_by_host.get(hostname)
-                            if existing:
-                                existing["occurrences"] = int(existing.get("occurrences", 1)) + 1
-                                self._last_subdomain_results = sorted(
-                                    findings_by_host.values(),
-                                    key=lambda item: str(item.get("matched_value", "")),
-                                )
-                                continue
-                            finding = {
-                                "type": "subdomain",
-                                "rule": "Discovered Subdomain",
-                                "score": 100,
-                                "repo": repo,
-                                "path": path,
-                                "line_number": line_no,
-                                "commit_sha": None,
-                                "matched_value": hostname,
-                                "matched_line": line.strip()[:500],
-                                "query_rule": "Global Domain Code Search",
-                                "query": query,
-                                "html_url": html_url,
-                                "possible_contains": f"Subdomain of {normalized_domain}",
-                                "why_flagged": f"Discovered hostname ending in {normalized_domain} from GitHub code search",
-                                "observed_at": None,
-                                "occurrences": 1,
-                            }
-                            findings_by_host[hostname] = finding
-                            self._last_subdomain_results = sorted(
-                                findings_by_host.values(),
-                                key=lambda item: str(item.get("matched_value", "")),
+                        for hostname in extract_subdomains_from_text(line, domain):
+                            self._add_subdomain_finding(
+                                findings_by_host=findings_by_host,
+                                domain=domain,
+                                hostname=hostname,
+                                repo=repo,
+                                path=path,
+                                line_number=line_no,
+                                matched_line=line,
+                                html_url=html_url,
+                                query_rule="Global Domain Code Search" if not query_prefix else "Repository Domain Code Search",
+                                query=query,
                             )
-                            if self.stream_to_stdout:
-                                print(hostname, flush=True)
                 if len(items) < 50 or (page * 50) >= self.max_results_per_query:
                     break
                 page += 1
+
+    def _discover_subdomains_in_repo_metadata(
+        self,
+        repo_full_name: str,
+        domain: str,
+        findings_by_host: Dict[str, Dict[str, Any]],
+    ) -> None:
+        try:
+            repo_meta = self.client.get_repo(repo_full_name)
+        except Exception as exc:
+            LOG.debug("Repo metadata fetch failed for %s during subdomain discovery: %s", repo_full_name, exc)
+            return
+
+        repo_url = str(repo_meta.get("html_url") or f"https://github.com/{repo_full_name}")
+        metadata_fields = [
+            ("repo:full_name", str(repo_meta.get("full_name") or "")),
+            ("repo:name", str(repo_meta.get("name") or "")),
+            ("repo:description", str(repo_meta.get("description") or "")),
+            ("repo:homepage", str(repo_meta.get("homepage") or "")),
+        ]
+        owner = repo_meta.get("owner") or {}
+        metadata_fields.append(("repo:owner", str(owner.get("login") or "")))
+
+        for path, text in metadata_fields:
+            self._record_subdomains_from_text(
+                findings_by_host,
+                domain,
+                repo_full_name,
+                path,
+                text,
+                repo_url,
+                "Repository Metadata",
+                "repo_metadata",
+                observed_at=str(repo_meta.get("updated_at") or repo_meta.get("pushed_at") or ""),
+            )
+
+    def _discover_subdomains_in_repo_tree(
+        self,
+        repo_full_name: str,
+        domain: str,
+        findings_by_host: Dict[str, Dict[str, Any]],
+    ) -> None:
+        fetch_budget = max(0, self.max_file_fetches)
+        if fetch_budget <= 0:
+            return
+        try:
+            repo_meta = self.client.get_repo(repo_full_name)
+            default_branch = repo_meta.get("default_branch") or "HEAD"
+            tree = self.client.get_repo_tree(repo_full_name, recursive=True)
+        except Exception as exc:
+            LOG.debug("Repo tree fetch failed for %s during subdomain discovery: %s", repo_full_name, exc)
+            return
+
+        blobs = [n for n in tree if n.get("type") == "blob"]
+        prioritized = sorted(
+            blobs,
+            key=lambda item: (
+                0 if str(item.get("path", "")).lower().startswith("readme") else 1,
+                0 if is_probably_text_path(str(item.get("path", ""))) else 1,
+                int(item.get("size") or 0),
+            ),
+        )
+        for file_obj in prioritized:
+            if fetch_budget <= 0:
+                break
+            path = str(file_obj.get("path") or "")
+            size = int(file_obj.get("size") or 0)
+            if size <= 0 or size > self.max_file_size_bytes or not is_probably_text_path(path):
+                continue
+            try:
+                text = self.client.get_file_content(repo_full_name, path, ref=default_branch)
+            except Exception as exc:
+                LOG.debug("Skipping unreadable file %s/%s during subdomain discovery: %s", repo_full_name, path, exc)
+                continue
+            fetch_budget -= 1
+            if not text:
+                continue
+            self._record_subdomains_from_text(
+                findings_by_host,
+                domain,
+                repo_full_name,
+                path,
+                text,
+                f"https://github.com/{repo_full_name}/blob/{default_branch}/{path}",
+                "Repository File Content",
+                "repo_tree_content",
+                observed_at=str(repo_meta.get("pushed_at") or repo_meta.get("updated_at") or ""),
+            )
+
+    def _discover_subdomains_in_commit_history(
+        self,
+        repo_full_name: str,
+        domain: str,
+        findings_by_host: Dict[str, Dict[str, Any]],
+    ) -> None:
+        if self.max_commits_per_repo <= 0:
+            return
+        commits_processed = 0
+        page = 1
+        since_iso = self.fresh_since.isoformat() if self.fresh_since else None
+        while commits_processed < self.max_commits_per_repo:
+            commits = self.client.list_repo_commits(repo_full_name, per_page=100, page=page, since=since_iso)
+            if not commits:
+                break
+            stop_early = False
+            for commit_stub in commits:
+                if commits_processed >= self.max_commits_per_repo:
+                    break
+                commit_date = (((commit_stub.get("commit") or {}).get("committer") or {}).get("date")
+                               or ((commit_stub.get("commit") or {}).get("author") or {}).get("date"))
+                if self.fresh_since and not self._is_fresh(commit_date):
+                    stop_early = True
+                    break
+                sha = commit_stub.get("sha")
+                if not sha:
+                    continue
+                commits_processed += 1
+                try:
+                    commit_data = self.client.get_commit(repo_full_name, sha)
+                except Exception as exc:
+                    LOG.debug("Commit fetch failed for %s@%s during subdomain discovery: %s", repo_full_name, sha, exc)
+                    continue
+                commit_html_url = str(commit_data.get("html_url") or "")
+                commit_message = str((commit_data.get("commit", {}) or {}).get("message") or "")
+                observed_at = (((commit_data.get("commit") or {}).get("committer") or {}).get("date")
+                               or ((commit_data.get("commit") or {}).get("author") or {}).get("date")
+                               or commit_date)
+                self._record_subdomains_from_text(
+                    findings_by_host,
+                    domain,
+                    repo_full_name,
+                    "commit:message",
+                    commit_message,
+                    commit_html_url,
+                    "Commit Message",
+                    "commit_message",
+                    observed_at=observed_at,
+                    commit_sha=sha,
+                )
+                for file_obj in commit_data.get("files", []) or []:
+                    path = str(file_obj.get("filename") or "")
+                    patch = str(file_obj.get("patch") or "")
+                    if not patch:
+                        continue
+                    for patch_line_no, patch_line in enumerate(patch.splitlines(), start=1):
+                        if not patch_line.startswith("+") or patch_line.startswith("+++"):
+                            continue
+                        self._record_subdomains_from_text(
+                            findings_by_host,
+                            domain,
+                            repo_full_name,
+                            path,
+                            patch_line[1:],
+                            commit_html_url,
+                            "Commit Patch",
+                            "commit_patch",
+                            observed_at=observed_at,
+                            commit_sha=sha,
+                        )
+            if stop_early or len(commits) < 100:
+                break
+            page += 1
+
+    def _discover_subdomains_in_pull_requests(
+        self,
+        repo_full_name: str,
+        domain: str,
+        findings_by_host: Dict[str, Dict[str, Any]],
+    ) -> None:
+        if self.max_pull_requests_per_repo <= 0:
+            return
+        prs_processed = 0
+        page = 1
+        while prs_processed < self.max_pull_requests_per_repo:
+            prs = self.client.list_repo_pull_requests(
+                repo_full_name,
+                state="all",
+                sort="updated",
+                direction="desc",
+                per_page=100,
+                page=page,
+            )
+            if not prs:
+                break
+            stop_early = False
+            for pr in prs:
+                if prs_processed >= self.max_pull_requests_per_repo:
+                    break
+                pr_updated_at = pr.get("updated_at") or pr.get("created_at")
+                if self.fresh_since and not self._is_fresh(pr_updated_at):
+                    stop_early = True
+                    break
+                pull_number = pr.get("number")
+                if not pull_number:
+                    continue
+                prs_processed += 1
+                pr_html_url = str(pr.get("html_url") or "")
+                pr_title = str(pr.get("title") or "")
+                pr_body = str(pr.get("body") or "")
+                head_sha = (pr.get("head") or {}).get("sha")
+                self._record_subdomains_from_text(findings_by_host, domain, repo_full_name, f"PR#{pull_number}:title", pr_title, pr_html_url, "Pull Request Title", "pull_request_title", pr_updated_at, head_sha, int(pull_number))
+                self._record_subdomains_from_text(findings_by_host, domain, repo_full_name, f"PR#{pull_number}:body", pr_body, pr_html_url, "Pull Request Description", "pull_request_body", pr_updated_at, head_sha, int(pull_number))
+                try:
+                    files = self.client.list_pull_request_files(repo_full_name, int(pull_number))
+                except Exception as exc:
+                    LOG.debug("PR files fetch failed for %s#%s during subdomain discovery: %s", repo_full_name, pull_number, exc)
+                    files = []
+                for file_obj in files:
+                    path = str(file_obj.get("filename") or "")
+                    patch = str(file_obj.get("patch") or "")
+                    if not patch:
+                        continue
+                    for patch_line in patch.splitlines():
+                        if not patch_line.startswith("+") or patch_line.startswith("+++"):
+                            continue
+                        self._record_subdomains_from_text(
+                            findings_by_host,
+                            domain,
+                            repo_full_name,
+                            path,
+                            patch_line[1:],
+                            pr_html_url,
+                            "Pull Request Patch",
+                            "pull_request_patch",
+                            observed_at=pr_updated_at,
+                            commit_sha=head_sha,
+                            pr_number=int(pull_number),
+                        )
+                comment_page = 1
+                while True:
+                    comments = self.client.list_issue_comments(repo_full_name, int(pull_number), per_page=100, page=comment_page)
+                    if not comments:
+                        break
+                    for comment in comments:
+                        comment_updated = comment.get("updated_at") or comment.get("created_at") or pr_updated_at
+                        self._record_subdomains_from_text(
+                            findings_by_host,
+                            domain,
+                            repo_full_name,
+                            f"PR#{pull_number}:conversation-comment",
+                            str(comment.get("body") or ""),
+                            str(comment.get("html_url") or pr_html_url),
+                            "Pull Request Conversation Comment",
+                            "pull_request_comment",
+                            observed_at=comment_updated,
+                            commit_sha=head_sha,
+                            pr_number=int(pull_number),
+                        )
+                    if len(comments) < 100:
+                        break
+                    comment_page += 1
+                review_page = 1
+                while True:
+                    comments = self.client.list_pull_request_review_comments(repo_full_name, int(pull_number), per_page=100, page=review_page)
+                    if not comments:
+                        break
+                    for comment in comments:
+                        comment_updated = comment.get("updated_at") or comment.get("created_at") or pr_updated_at
+                        self._record_subdomains_from_text(
+                            findings_by_host,
+                            domain,
+                            repo_full_name,
+                            f"PR#{pull_number}:review-comment",
+                            str(comment.get("body") or ""),
+                            str(comment.get("html_url") or pr_html_url),
+                            "Pull Request Review Comment",
+                            "pull_request_review_comment",
+                            observed_at=comment_updated,
+                            commit_sha=str(comment.get("commit_id") or head_sha or ""),
+                            pr_number=int(pull_number),
+                        )
+                    if len(comments) < 100:
+                        break
+                    review_page += 1
+            if stop_early or len(prs) < 100:
+                break
+            page += 1
+
+    def _discover_subdomains_in_issues_and_releases(
+        self,
+        repo_full_name: str,
+        domain: str,
+        findings_by_host: Dict[str, Dict[str, Any]],
+    ) -> None:
+        if self.max_issues_per_repo > 0:
+            issues_processed = 0
+            page = 1
+            while issues_processed < self.max_issues_per_repo:
+                issues = self.client.list_repo_issues(
+                    repo_full_name,
+                    state="all",
+                    sort="updated",
+                    direction="desc",
+                    per_page=100,
+                    page=page,
+                )
+                if not issues:
+                    break
+                stop_early = False
+                for issue in issues:
+                    if issues_processed >= self.max_issues_per_repo:
+                        break
+                    if issue.get("pull_request"):
+                        continue
+                    issue_updated = issue.get("updated_at") or issue.get("created_at")
+                    if self.fresh_since and not self._is_fresh(issue_updated):
+                        stop_early = True
+                        break
+                    issue_number = issue.get("number")
+                    if not issue_number:
+                        continue
+                    issues_processed += 1
+                    issue_html_url = str(issue.get("html_url") or "")
+                    self._record_subdomains_from_text(findings_by_host, domain, repo_full_name, f"Issue#{issue_number}:title", str(issue.get("title") or ""), issue_html_url, "Issue Title", "issue_title", issue_updated, issue_number=int(issue_number))
+                    self._record_subdomains_from_text(findings_by_host, domain, repo_full_name, f"Issue#{issue_number}:body", str(issue.get("body") or ""), issue_html_url, "Issue Description", "issue_body", issue_updated, issue_number=int(issue_number))
+                    comment_page = 1
+                    while True:
+                        comments = self.client.list_issue_comments(repo_full_name, int(issue_number), per_page=100, page=comment_page)
+                        if not comments:
+                            break
+                        for comment in comments:
+                            comment_updated = comment.get("updated_at") or comment.get("created_at") or issue_updated
+                            self._record_subdomains_from_text(
+                                findings_by_host,
+                                domain,
+                                repo_full_name,
+                                f"Issue#{issue_number}:comment",
+                                str(comment.get("body") or ""),
+                                str(comment.get("html_url") or issue_html_url),
+                                "Issue Comment",
+                                "issue_comment",
+                                observed_at=comment_updated,
+                                issue_number=int(issue_number),
+                            )
+                        if len(comments) < 100:
+                            break
+                        comment_page += 1
+                if stop_early or len(issues) < 100:
+                    break
+                page += 1
+
+        if self.max_releases_per_repo <= 0:
+            return
+        releases_processed = 0
+        page = 1
+        while releases_processed < self.max_releases_per_repo:
+            releases = self.client.list_repo_releases(repo_full_name, per_page=100, page=page)
+            if not releases:
+                break
+            for release in releases:
+                if releases_processed >= self.max_releases_per_repo:
+                    break
+                release_date = release.get("published_at") or release.get("created_at")
+                if self.fresh_since and not self._is_fresh(release_date):
+                    continue
+                releases_processed += 1
+                release_html_url = str(release.get("html_url") or "")
+                release_name = str(release.get("name") or release.get("tag_name") or "")
+                self._record_subdomains_from_text(findings_by_host, domain, repo_full_name, f"Release:{release_name or 'untitled'}:name", release_name, release_html_url, "Release Name", "release_name", release_date)
+                self._record_subdomains_from_text(findings_by_host, domain, repo_full_name, f"Release:{release_name or 'untitled'}:notes", str(release.get("body") or ""), release_html_url, "Release Notes", "release_notes", release_date)
+            if len(releases) < 100:
+                break
+            page += 1
+
+    def _discover_subdomains_in_repo(
+        self,
+        repo_full_name: str,
+        domain: str,
+        findings_by_host: Dict[str, Dict[str, Any]],
+    ) -> None:
+        self._discover_subdomains_in_repo_metadata(repo_full_name, domain, findings_by_host)
+        self._discover_subdomains_via_code_search(domain, findings_by_host, query_prefix=f'repo:{repo_full_name} ')
+        self._discover_subdomains_in_repo_tree(repo_full_name, domain, findings_by_host)
+        self._discover_subdomains_in_commit_history(repo_full_name, domain, findings_by_host)
+        self._discover_subdomains_in_pull_requests(repo_full_name, domain, findings_by_host)
+        self._discover_subdomains_in_issues_and_releases(repo_full_name, domain, findings_by_host)
+
+    def discover_subdomains(self, domain: str) -> List[Dict[str, Any]]:
+        normalized_domain = normalize_domain(domain)
+        if not normalized_domain:
+            return []
+
+        findings_by_host: Dict[str, Dict[str, Any]] = {}
+        self._discover_subdomains_via_code_search(normalized_domain, findings_by_host)
+
+        repos = self.client.search_repos_by_domain(normalized_domain, limit=self.max_results_per_query)
+        for repo_full_name in repos:
+            try:
+                self._discover_subdomains_in_repo(repo_full_name, normalized_domain, findings_by_host)
+            except Exception as exc:
+                LOG.debug("Expanded subdomain discovery failed for %s: %s", repo_full_name, exc)
         self._last_subdomain_results = sorted(
             findings_by_host.values(),
             key=lambda item: str(item.get("matched_value", "")),
@@ -1676,8 +2167,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Important Commands:\n"
             "  1) Scan one repository:\n"
             "     python github_recon_scanner.py --repo owner/repo --token TOKEN\n"
-            "  2) Discover subdomains across GitHub code:\n"
-            "     python github_recon_scanner.py --domain google.com --discover-subdomains\n"
+            "  2) Discover subdomains across GitHub sources:\n"
+            "     python github_recon_scanner.py --domain example.com --discover-subdomains\n"
             "  3) Scan all repos in an org:\n"
             "     python github_recon_scanner.py --org my-org --token TOKEN\n"
             "  4) Deep scan all files in org repos:\n"
@@ -1752,7 +2243,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_group.add_argument(
         "--discover-subdomains",
         action="store_true",
-        help="For --domain targets, search all GitHub code for subdomains and deeper hostnames ending in that domain.",
+        help="For --domain targets, discover subdomains from GitHub code, metadata, patches, discussions, and release text.",
     )
     scan_group.add_argument("--max-files-per-repo", type=int, default=5000, help="Max files to scan per repository in --scan-all-files mode.")
     scan_group.add_argument("--max-file-size-bytes", type=int, default=1000000, help="Skip files larger than this size in bytes.")
@@ -1944,7 +2435,7 @@ def print_examples() -> None:
         "  --output results.html\n"
         "\nImportant Commands:\n"
         "  python github_recon_scanner.py --repo owner/repo --token TOKEN\n"
-        "  python github_recon_scanner.py --domain google.com --discover-subdomains --output subdomains.json\n"
+        "  python github_recon_scanner.py --domain example.com --discover-subdomains --output subdomains.json\n"
         "  python github_recon_scanner.py --repo owner/repo --fresh-days 7 --max-prs-per-repo 50\n"
         "  python github_recon_scanner.py --repo owner/repo --fresh-days 14 --max-issues-per-repo 40\n"
         "  python github_recon_scanner.py --org my-org --scan-all-files --max-files-per-repo 20000\n"
