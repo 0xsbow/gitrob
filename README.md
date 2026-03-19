@@ -98,6 +98,7 @@ Shortcuts:
 - Bare apex domains like `example.com` are excluded; only deeper hostnames are reported.
 - This works for any domain you provide, such as `example.com`, `acme.co.uk`, or `my-company.io`.
 - Output works with the normal formats: JSON, CSV, TXT, and HTML.
+- Subdomain discovery does not save a file by default; add `--output` if you want to persist the results.
 
 ## Commit Scanning
 
