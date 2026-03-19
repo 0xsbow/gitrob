@@ -2091,8 +2091,13 @@ def save_output_by_extension(findings: List[Dict[str, Any]], output_path: str) -
         save_json(findings, output_path)
 
 
-def save_requested_outputs(findings: List[Dict[str, Any]], output_path: str, csv_output_path: Optional[str] = None) -> None:
-    save_output_by_extension(findings, output_path)
+def save_requested_outputs(
+    findings: List[Dict[str, Any]],
+    output_path: Optional[str] = None,
+    csv_output_path: Optional[str] = None,
+) -> None:
+    if output_path:
+        save_output_by_extension(findings, output_path)
     if csv_output_path:
         save_csv(findings, csv_output_path)
 
@@ -2284,7 +2289,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan_group.add_argument("--relaxed", action="store_true", help="Relax strict false-positive filters.")
 
     output_group = parser.add_argument_group("Output")
-    output_group.add_argument("--output", default="results.json", help="Output file path.")
+    output_group.add_argument(
+        "--output",
+        help="Output file path. Default is results.json for normal scans; subdomain discovery writes no file unless you set this.",
+    )
     output_group.add_argument("--csv-output", help="Optional additional CSV output file path.")
     output_group.add_argument("--alert-webhook", help="Optional webhook URL for summarized alerts.")
 
@@ -2627,6 +2635,11 @@ def main() -> int:
         ),
     )
 
+    output_path = args.output or ("results.json" if not args.discover_subdomains else None)
+    should_save_subdomain_cache = args.discover_subdomains and (
+        bool(args.output) or bool(args.csv_output) or bool(args.resume) or args.progress_file != ".scan_progress.json"
+    )
+
     if args.discover_subdomains:
         if target_type != "domain":
             print("--discover-subdomains requires a domain target. Use --domain example.com or --target example.com --type domain.")
@@ -2634,19 +2647,22 @@ def main() -> int:
         findings: List[Dict[str, Any]] = []
         try:
             findings = scanner.discover_subdomains(target_value)
-            save_progress(progress_file, findings, [])
-            save_requested_outputs(findings, args.output, args.csv_output)
+            if should_save_subdomain_cache:
+                save_progress(progress_file, findings, [])
+            save_requested_outputs(findings, output_path, args.csv_output)
         except KeyboardInterrupt:
             print("Subdomain discovery interrupted by user (Ctrl+C). Saving partial results and cache now...")
             partial = scanner._last_subdomain_results or findings
-            save_progress(progress_file, partial, [])
-            save_requested_outputs(partial, args.output, args.csv_output)
+            if should_save_subdomain_cache:
+                save_progress(progress_file, partial, [])
+            save_requested_outputs(partial, output_path, args.csv_output)
             return 130
         except RuntimeError as exc:
             partial = scanner._last_subdomain_results or findings
             if partial:
-                save_progress(progress_file, partial, [])
-                save_requested_outputs(partial, args.output, args.csv_output)
+                if should_save_subdomain_cache:
+                    save_progress(progress_file, partial, [])
+                save_requested_outputs(partial, output_path, args.csv_output)
             if "Authentication failed" in str(exc) or "401" in str(exc):
                 if auth_mode == "authenticated":
                     print("Bad credentials. Check your GitHub token or run without --token.")
