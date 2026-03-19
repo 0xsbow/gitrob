@@ -1,179 +1,154 @@
-  # GitHub Security Scanner
+# GitHubReconScanner
 
-`github_scanner.py` is a Python recon and secret-scanning script for public GitHub targets. It can scan:
+Ethical GitHub reconnaissance scanner for identifying potentially sensitive data in public repositories.
 
-- A GitHub organization
-- A GitHub user account
-- A single repository
-
-It walks repository contents through the GitHub REST API, downloads text files, and searches them for common sensitive-data patterns such as API keys, tokens, passwords, and private keys.
-
-## Features
-
-- Scan all repos in an organization with `--org`
-- Scan all repos for a user with `--user`
-- Scan one repo with `--repo`
-- Built-in regex signatures for common secrets
-- Add custom regex rules from CLI
-- Load custom regex rules from a JSON config file
-- Optional JSON report output
-- Optional GitHub token support to improve API limits
-
-## Built-In Detection Patterns
-
-The scanner currently includes patterns for:
-
-- AWS access keys and secret keys
-- GitHub tokens
-- Generic API keys and secrets
-- Password assignments
-- Private keys
-- Slack, Stripe, Google, Firebase, Heroku, MailChimp, Mailgun, Telegram, Twilio, PayPal/Braintree, Square, NPM, and Docker Hub tokens
-- JWTs
-
-## Requirements
-
-- Python 3.8+
-- `requests`
-
-## Installation
+## Install
 
 ```bash
-git clone <your-repo-url>
-cd latest_scanner
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## PAT Scopes
+
+Use a GitHub Personal Access Token with scopes aligned to your use case:
+
+- `repo`
+- `read:org`
+- Search permissions as applicable to your token type
+
+Pass token via `--token` or export and pass from shell:
+
+```bash
+export GITHUB_TOKEN="YOUR_TOKEN"
+python github_recon_scanner.py --token "$GITHUB_TOKEN" --repo owner/repo --verbose
+```
+
 ## Usage
 
-### Scan an organization
-
 ```bash
-python3 github_scanner.py --org microsoft
+python github_recon_scanner.py --target example.com --type domain --output results.json
+python github_recon_scanner.py --user bugbuster --patterns custom_patterns.json --verbose
+python github_recon_scanner.py --org some-org --output findings.csv
+python github_recon_scanner.py --org some-org --output findings.json --csv-output findings.csv
+python github_recon_scanner.py --org some-org --output findings.txt
+python github_recon_scanner.py --org some-org --output findings.html
+python github_recon_scanner.py --repo owner/repo --concurrency 1 --requests-per-minute 30
+python github_recon_scanner.py --repo owner/repo --no-regex-grep  # disable grep-style regex extraction
+python github_recon_scanner.py --repo owner/repo --max-commits-per-repo 50
+python github_recon_scanner.py --repo owner/repo --max-prs-per-repo 50
+python github_recon_scanner.py --repo owner/repo --fresh-days 7
+python github_recon_scanner.py --repo owner/repo --fresh-since 2026-02-01T00:00:00Z
+python github_recon_scanner.py --repo owner/repo --fresh-days 7 --latest-only
+python github_recon_scanner.py --domain google.com --discover-subdomains --output subdomains.json
+python github_recon_scanner.py --domain example.com --discover-subdomains --output subdomains.csv
+python github_recon_scanner.py --org my-org --resume --progress-file .scan_progress.json
+python github_recon_scanner.py --repo owner/repo --custom-pattern MyToken 'mytok_[A-Za-z0-9]{32}'
+python github_recon_scanner.py --org my-org --flush  # start fresh for this target
+python github_recon_scanner.py --org my-org --scan-all-files --max-files-per-repo 20000
+python github_recon_scanner.py --org my-org --tokens "$TOKEN1,$TOKEN2"
+python github_recon_scanner.py --org my-org --token TOKEN1 --token TOKEN2
+python github_recon_scanner.py --org my-org --tokens-file tokens.txt
 ```
 
-### Scan a user
+Shortcuts:
 
-```bash
-python3 github_scanner.py --user torvalds
+- `--domain example.com`
+- `--user bugbuster`
+- `--org my-org`
+- `--repo owner/repo`
+
+## Features
+
+- Rate-limit aware requests using `/rate_limit`
+- Conservative built-in pacing for both core API calls and stricter search API calls
+- Sleep until reset when `X-RateLimit-Remaining` is exhausted
+- Exponential backoff for 403/429 and secondary limits
+- Search query pacing (`--requests-per-minute`) is safety-capped to reduce throttling risk
+- `--no-rate-limit` is kept only for CLI compatibility and does not disable pacing
+- Progress save/resume checkpoints (`--resume`, `--progress-file`, `--clear-progress`)
+- Automatic target-based cache resume (`.scan_cache/<type>_<target>.json`)
+- `Ctrl+C` saves cache immediately and exits; rerun same target to continue
+- `--flush` clears cache for the selected target and starts from scratch
+- Multi-token input (`--token` repeatable, `--tokens`, `--tokens-file`) with auto failover if active token becomes invalid
+- Repo/org/user/domain target support
+- Global subdomain and sub-subdomain discovery for `--domain` targets with `--discover-subdomains`
+- Code search qualifiers (`repo:`, `filename:`) and optional regex queries (`--use-regex-query`)
+- Client-side regex grep over GitHub file contents with matched-value extraction and confidence scoring
+- Commit history scanning (recent commit patches) to catch secrets that were committed and later removed
+- Pull request patch scanning (recent PR diffs)
+- Collaboration text scanning (recent PR descriptions/comments, issue descriptions/comments, release notes)
+- Freshness filtering (`--fresh-days`, `--fresh-since`) so results stay current and relevant
+- `--latest-only` to keep only findings from the most recent observed activity per repo
+- Optional full repository file scan (`--scan-all-files`) to enumerate and scan all files in each repo
+- TXT/JSON/HTML/CSV output inferred from `--output` file extension
+- Optional parallel CSV export with `--csv-output findings.csv`
+- Prints full finding URLs to console by default (repo/org/user/domain scans)
+- `--verbose` prints detailed per-finding context and debug logs
+
+## Subdomain Discovery
+
+- Use `--discover-subdomains` together with `--domain example.com`.
+- The scanner searches GitHub code globally for the base domain, then regex-extracts hostnames such as `api.example.com` and `a.b.example.com`.
+- Bare apex domains like `example.com` are excluded; only deeper hostnames are reported.
+- Output works with the normal formats: JSON, CSV, TXT, and HTML.
+
+## Commit Scanning
+
+- Enabled by default.
+- Scans added lines in recent commit patches and applies the same regex rules.
+- Control volume with `--max-commits-per-repo` (default: `30`).
+- Disable with `--no-scan-commits` if you need to reduce API load.
+
+## Pull Request and Discussion Scanning
+
+- Pull request patch scanning is enabled by default.
+- Scans added lines in PR diffs plus PR text/comment threads.
+- Scans issue text/comment threads and release notes for leaked secrets.
+- Controls:
+  - `--max-prs-per-repo` (default: `20`)
+  - `--max-issues-per-repo` (default: `30`)
+  - `--max-releases-per-repo` (default: `20`)
+  - `--no-scan-prs`
+  - `--no-scan-collab-text`
+
+## Fresh Data Filters
+
+- Default behavior scans only recent activity from the last `30` days.
+- Use `--fresh-days N` to adjust recency window.
+- Use `--fresh-since 2026-02-01T00:00:00Z` for a fixed UTC cutoff.
+- Use `--fresh-days 0` to disable freshness filtering.
+
+## Custom Patterns File
+
+Create a JSON list:
+
+```json
+[
+  {
+    "name": "My Internal Token",
+    "regex": "mytok_[A-Za-z0-9]{32}",
+    "literals": ["mytok_"],
+    "severity": 90,
+    "description": "Internal API token format"
+  }
+]
 ```
 
-### Scan a single repository
-
-```bash
-python3 github_scanner.py --repo owner/repo
-```
-
-You can also pass a GitHub URL:
-
-```bash
-python3 github_scanner.py --repo https://github.com/owner/repo
-```
-
-### Use a GitHub token
-
-Using a personal access token is recommended to reduce API rate-limit issues.
-
-```bash
-python3 github_scanner.py --org microsoft --token YOUR_GITHUB_TOKEN
-```
-
-### Save results to JSON
-
-```bash
-python3 github_scanner.py --repo owner/repo --output report.json
-```
-
-### Load custom patterns from config
-
-```bash
-python3 github_scanner.py --org target-org --config patterns_config.example.json
-```
-
-### Add custom patterns from the command line
-
-```bash
-python3 github_scanner.py \
-  --repo owner/repo \
-  --custom-pattern "Internal Token" "INT_[A-Z0-9]{24}"
-```
-
-### Disable built-in delays
-
-```bash
-python3 github_scanner.py --user someuser --no-rate-limit
-```
-
-Use `--no-rate-limit` carefully. It disables the script's sleep intervals and may cause GitHub API throttling.
-
-## CLI Reference
-
-```bash
-python3 github_scanner.py [-h] [--org ORG] [--user USER] [--repo REPO]
-                         [--token TOKEN] [--output OUTPUT] [--config CONFIG]
-                         [--no-rate-limit] [--custom-pattern NAME PATTERN]
-```
-
-Options:
-
-- `--org`: organization name to scan
-- `--user`: GitHub username to scan
-- `--repo`: single repository to scan in `owner/repo` format or full GitHub URL
-- `--token`: GitHub personal access token
-- `--output`, `-o`: save findings as JSON
-- `--config`, `-c`: load custom patterns from a JSON file
-- `--no-rate-limit`: disable built-in delays
-- `--custom-pattern NAME PATTERN`: add one custom regex rule; may be used multiple times
-
-## Config File Format
-
-The config file must be JSON and contain a `custom_patterns` object:
+Alternate config format (compatible with `--config`):
 
 ```json
 {
   "custom_patterns": {
-    "Internal Token": "INT_[A-Z0-9]{24}",
-    "Example Secret": "SECRET_[A-Za-z0-9_-]{16,}"
+    "My Internal Token": "mytok_[A-Za-z0-9]{32}",
+    "Legacy Key": "legacy_[0-9A-F]{40}"
   }
 }
 ```
 
-A sample file is included at `patterns_config.example.json`.
+## Ethical Use
 
-## Output
-
-When matches are found, the script prints a summary grouped by finding type and can optionally save a JSON report with:
-
-- Scan timestamp
-- Total findings
-- Full findings list
-- Summary count by finding type
-
-Each finding includes:
-
-- Detection type
-- Repository name
-- File path
-- Line number
-- Matched value preview
-- Timestamp
-
-## Notes and Limitations
-
-- This scanner relies on the GitHub API and is affected by API rate limits.
-- It skips files larger than 1 MB.
-- It only scans files that can be downloaded as text content.
-- Regex-based matching may produce false positives.
-- Very large orgs may take time to scan.
-
-## Responsible Use
-
-Use this tool only on targets you are authorized to assess. If you discover exposed secrets, handle them responsibly and report them through the appropriate disclosure process.
-
-## Project Files
-
-- `github_scanner.py`: main scanner
-- `requirements.txt`: Python dependency list
-- `patterns_config.example.json`: sample custom-pattern config
+- Scan only authorized targets and public data.
+- Follow bug bounty scope and GitHub Terms of Service.
+- Keep concurrency and RPM low to avoid abuse flags.
