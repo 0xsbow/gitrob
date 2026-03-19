@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-GitHubReconScanner
+Github Recon Scanner
 
-Ethical GitHub reconnaissance scanner for public repositories.
+GitHub reconnaissance scanner for public repositories.
 Uses GitHub REST APIs with rate-limit-aware pacing and client-side pattern validation.
 """
 
@@ -34,7 +34,7 @@ except Exception:  # pragma: no cover
     re2 = None
 
 
-LOG = logging.getLogger("GitHubReconScanner")
+LOG = logging.getLogger("Github Recon Scanner")
 
 SAFE_CORE_RPM_AUTHENTICATED = 15
 SAFE_CORE_RPM_UNAUTHENTICATED = 6
@@ -159,7 +159,7 @@ class GitHubApiClient:
         headers = {
             "Accept": "application/vnd.github+json, application/vnd.github.text-match+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "GitHubReconScanner/1.0",
+            "User-Agent": "Github Recon Scanner/1.0",
         }
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -2033,7 +2033,7 @@ def save_csv(findings: List[Dict[str, Any]], output_path: str) -> None:
 
 def save_txt(findings: List[Dict[str, Any]], output_path: str) -> None:
     lines: List[str] = []
-    lines.append(f"GitHubReconScanner Findings: {len(findings)}")
+    lines.append(f"Github Recon Scanner Findings: {len(findings)}")
     lines.append("")
     for i, f in enumerate(findings, start=1):
         lines.append(f"[{i}] {f.get('rule')} (score={f.get('score')})")
@@ -2066,11 +2066,11 @@ def save_html(findings: List[Dict[str, Any]], output_path: str) -> None:
         )
     body = (
         "<!doctype html><html><head><meta charset='utf-8'>"
-        "<title>GitHubReconScanner Results</title>"
+        "<title>Github Recon Scanner Results</title>"
         "<style>body{font-family:Arial,sans-serif;padding:16px;}table{border-collapse:collapse;width:100%;}"
         "th,td{border:1px solid #ddd;padding:8px;vertical-align:top;}th{background:#f4f4f4;text-align:left;}</style>"
         "</head><body>"
-        f"<h1>GitHubReconScanner Findings ({len(findings)})</h1>"
+        f"<h1>Github Recon Scanner Findings ({len(findings)})</h1>"
         "<table><thead><tr><th>Score</th><th>Rule</th><th>Repo</th><th>Path</th><th>Line</th>"
         "<th>Commit</th><th>Matched Value</th><th>URL</th></tr></thead><tbody>"
         + "".join(rows)
@@ -2142,7 +2142,7 @@ def dedup_findings(findings: List[Dict[str, Any]], latest_only: bool = False) ->
 
 def send_alerts(webhook_url: str, findings: List[Dict[str, Any]], top_n: int = 10) -> None:
     payload = {
-        "scanner": "GitHubReconScanner",
+        "scanner": "Github Recon Scanner",
         "total_findings": len(findings),
         "top_findings": findings[:top_n],
         "generated_at_utc": datetime.now(tz=timezone.utc).isoformat(),
@@ -2158,7 +2158,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         description=(
-            "GitHubReconScanner\n"
+            "Github Recon Scanner\n"
             "Ethical scanner for finding exposed secrets in public GitHub data.\n"
             "Tip: run with --examples for a guided command list."
         ),
@@ -2414,7 +2414,7 @@ def print_findings_to_console(findings: List[Dict[str, Any]], verbose: bool = Fa
 
 def print_examples() -> None:
     print(
-        "\nGitHubReconScanner Command Guide\n"
+        "\nGithub Recon Scanner Command Guide\n"
         "================================\n"
         "Step 1: Pick one target option\n"
         "  --repo owner/repo\n"
