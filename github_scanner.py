@@ -533,7 +533,7 @@ def finding_sort_key(finding: Dict[str, Any]) -> Tuple[float, int]:
     return (timestamp, score)
 
 
-class GitHubReconScanner:
+class GithubReconScanner:
     def __init__(
         self,
         client: GitHubApiClient,
@@ -2159,7 +2159,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Github Recon Scanner\n"
-            "for finding exposed secrets in public GitHub data.\n"
+            "Scanner for finding exposed secrets in public GitHub data.\n"
             "Tip: run with --examples for a guided command list."
         ),
         formatter_class=CleanHelpFormatter,
@@ -2344,8 +2344,20 @@ def warn_if_high_volume(target_type: str, concurrency: int, rpm: int) -> None:
     if target_type in {"domain", "org", "user"}:
         LOG.warning(
             "Ensure you are authorized to scan this target scope. "
-            "This scanner is for ethical, public-data recon only."
+            "This scanner is for public-data recon only."
         )
+
+
+def print_unauthenticated_restrictions() -> None:
+    print(
+        "No GitHub token provided. Continuing with unauthenticated API access.\n"
+        "Restrictions:\n"
+        "- Lower GitHub API and search rate limits\n"
+        "- Slower scans due to stricter pacing\n"
+        "- Reduced coverage on larger domains/orgs/users before throttling\n"
+        "- Higher chance of incomplete subdomain discovery or fewer findings\n"
+        "Use --token, --tokens, or --tokens-file for better coverage."
+    )
 
 
 def build_finding_url(finding: Dict[str, Any]) -> str:
@@ -2566,6 +2578,8 @@ def main() -> int:
     rpm = client.core_rpm
     warn_if_high_volume(target_type, args.concurrency, rpm)
     LOG.info("API mode: %s", auth_mode)
+    if auth_mode == "unauthenticated" and (args.discover_subdomains or target_type in {"domain", "org", "user"}):
+        print_unauthenticated_restrictions()
     core = rate.get("resources", {}).get("core", {})
     search = rate.get("resources", {}).get("search", {})
     LOG.info(
@@ -2582,7 +2596,7 @@ def main() -> int:
             args.rate_limit_threshold,
         )
 
-    scanner = GitHubReconScanner(
+    scanner = GithubReconScanner(
         client=client,
         rules=rules,
         use_regex_query=args.use_regex_query,
