@@ -2159,7 +2159,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Github Recon Scanner\n"
-            "Ethical scanner for finding exposed secrets in public GitHub data.\n"
+            "for finding exposed secrets in public GitHub data.\n"
             "Tip: run with --examples for a guided command list."
         ),
         formatter_class=CleanHelpFormatter,
