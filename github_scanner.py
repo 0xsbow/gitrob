@@ -2648,7 +2648,13 @@ def main() -> int:
                 save_progress(progress_file, partial, [])
                 save_requested_outputs(partial, args.output, args.csv_output)
             if "Authentication failed" in str(exc) or "401" in str(exc):
-                print("Bad credentials. Check your GitHub token or run without --token.")
+                if auth_mode == "authenticated":
+                    print("Bad credentials. Check your GitHub token or run without --token.")
+                else:
+                    print(
+                        "GitHub rejected the unauthenticated request. "
+                        "Retry later or use --token, --tokens, or --tokens-file for higher limits."
+                    )
             else:
                 print(f"Subdomain discovery failed: {exc}")
             return 1
