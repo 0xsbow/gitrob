@@ -41,7 +41,7 @@ python github_recon_scanner.py --repo owner/repo --max-prs-per-repo 50
 python github_recon_scanner.py --repo owner/repo --fresh-days 7
 python github_recon_scanner.py --repo owner/repo --fresh-since 2026-02-01T00:00:00Z
 python github_recon_scanner.py --repo owner/repo --fresh-days 7 --latest-only
-python github_recon_scanner.py --domain google.com --discover-subdomains --output subdomains.json
+python github_recon_scanner.py --domain example.com --discover-subdomains --output subdomains.json
 python github_recon_scanner.py --domain example.com --discover-subdomains --output subdomains.csv
 python github_recon_scanner.py --org my-org --resume --progress-file .scan_progress.json
 python github_recon_scanner.py --repo owner/repo --custom-pattern MyToken 'mytok_[A-Za-z0-9]{32}'
@@ -73,7 +73,8 @@ Shortcuts:
 - `--flush` clears cache for the selected target and starts from scratch
 - Multi-token input (`--token` repeatable, `--tokens`, `--tokens-file`) with auto failover if active token becomes invalid
 - Repo/org/user/domain target support
-- Global subdomain and sub-subdomain discovery for `--domain` targets with `--discover-subdomains`
+- Global subdomain and sub-subdomain discovery for any `--domain` target with `--discover-subdomains`
+- Subdomain discovery now combines multiple GitHub sources: global code search, repo-scoped code search, repository metadata, small text files, recent commit patches, PR patches, issue/PR comments, and release notes
 - Code search qualifiers (`repo:`, `filename:`) and optional regex queries (`--use-regex-query`)
 - Client-side regex grep over GitHub file contents with matched-value extraction and confidence scoring
 - Commit history scanning (recent commit patches) to catch secrets that were committed and later removed
@@ -90,8 +91,10 @@ Shortcuts:
 ## Subdomain Discovery
 
 - Use `--discover-subdomains` together with `--domain example.com`.
-- The scanner searches GitHub code globally for the base domain, then regex-extracts hostnames such as `api.example.com` and `a.b.example.com`.
+- The scanner regex-extracts hostnames such as `api.example.com` and `a.b.example.com` from multiple GitHub sources.
+- Sources include global code search, repo-scoped code search, repository metadata, repository text files, commit patches, pull request patches, issue and PR discussion text, and release notes.
 - Bare apex domains like `example.com` are excluded; only deeper hostnames are reported.
+- This works for any domain you provide, such as `example.com`, `acme.co.uk`, or `my-company.io`.
 - Output works with the normal formats: JSON, CSV, TXT, and HTML.
 
 ## Commit Scanning
