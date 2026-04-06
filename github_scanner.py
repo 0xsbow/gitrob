@@ -2231,19 +2231,19 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Important Commands:\n"
             "  1) Scan one repository:\n"
-            "     python github_recon_scanner.py --repo owner/repo --token TOKEN\n"
+            "     python github_scanner.py --repo owner/repo --token TOKEN\n"
             "  2) Discover subdomains across GitHub sources:\n"
-            "     python github_recon_scanner.py --domain example.com --discover-subdomains\n"
+            "     python github_scanner.py --domain example.com --discover-subdomains\n"
             "  3) Scan all repos in an org:\n"
-            "     python github_recon_scanner.py --org my-org --token TOKEN\n"
+            "     python github_scanner.py --org my-org --token TOKEN\n"
             "  4) Deep scan all files in org repos:\n"
-            "     python github_recon_scanner.py --org my-org --scan-all-files --max-files-per-repo 20000\n"
+            "     python github_scanner.py --org my-org --scan-all-files --max-files-per-repo 20000\n"
             "  5) Resume previous run:\n"
-            "     python github_recon_scanner.py --org my-org --resume\n"
+            "     python github_scanner.py --org my-org --resume\n"
             "  6) Start fresh for a target:\n"
-            "     python github_recon_scanner.py --org my-org --flush\n"
+            "     python github_scanner.py --org my-org --flush\n"
             "  7) View extra examples:\n"
-            "     python github_recon_scanner.py --examples\n"
+            "     python github_scanner.py --examples\n"
         ),
     )
 
@@ -2542,13 +2542,13 @@ def print_examples() -> None:
         "  --output results.txt\n"
         "  --output results.html\n"
         "\nImportant Commands:\n"
-        "  python github_recon_scanner.py --repo owner/repo --token TOKEN\n"
-        "  python github_recon_scanner.py --domain example.com --discover-subdomains --output subdomains.json\n"
-        "  python github_recon_scanner.py --repo owner/repo --fresh-days 7 --max-prs-per-repo 50\n"
-        "  python github_recon_scanner.py --repo owner/repo --fresh-days 14 --max-issues-per-repo 40\n"
-        "  python github_recon_scanner.py --org my-org --scan-all-files --max-files-per-repo 20000\n"
-        "  python github_recon_scanner.py --org my-org --resume\n"
-        "  python github_recon_scanner.py --org my-org --flush\n"
+        "  python github_scanner.py --repo owner/repo --token TOKEN\n"
+        "  python github_scanner.py --domain example.com --discover-subdomains --output subdomains.json\n"
+        "  python github_scanner.py --repo owner/repo --fresh-days 7 --max-prs-per-repo 50\n"
+        "  python github_scanner.py --repo owner/repo --fresh-days 14 --max-issues-per-repo 40\n"
+        "  python github_scanner.py --org my-org --scan-all-files --max-files-per-repo 20000\n"
+        "  python github_scanner.py --org my-org --resume\n"
+        "  python github_scanner.py --org my-org --flush\n"
     )
 
 
