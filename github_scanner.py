@@ -2249,19 +2249,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     misc_group = parser.add_argument_group("General")
     misc_group.add_argument(
+        "-x",
         "--examples",
         action="store_true",
         help="Show a clean command cookbook and exit.",
     )
     misc_group.add_argument(
+        "-v",
         "--verbose",
         action="store_true",
         help="Show detailed logs and extra finding context.",
     )
-    misc_group.add_argument("--concurrency", type=int, default=1, help="Concurrent repo scans (keep low).")
-    misc_group.add_argument("--requests-per-minute", type=int, default=None, help="Global request pacing cap.")
-    misc_group.add_argument("--rate-limit-threshold", type=int, default=30, help="Warn when Search API remaining requests are low.")
+    misc_group.add_argument("-C", "--concurrency", type=int, default=1, help="Concurrent repo scans (keep low).")
+    misc_group.add_argument("-R", "--requests-per-minute", type=int, default=None, help="Global request pacing cap.")
+    misc_group.add_argument("-L", "--rate-limit-threshold", type=int, default=30, help="Warn when Search API remaining requests are low.")
     misc_group.add_argument(
+        "-N",
         "--no-rate-limit",
         action="store_true",
         help="Deprecated compatibility flag. Pacing stays enabled to protect users from GitHub throttling.",
@@ -2269,25 +2272,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     auth_group = parser.add_argument_group("Authentication")
     auth_group.add_argument(
+        "-t",
         "--token",
         action="append",
         help="GitHub PAT (repeatable). Recommended scopes: repo, read:org, and search permissions.",
     )
-    auth_group.add_argument("--tokens", help="Comma-separated GitHub PATs (alternative input).")
-    auth_group.add_argument("--tokens-file", help="File with one GitHub PAT per line.")
+    auth_group.add_argument("-T", "--tokens", help="Comma-separated GitHub PATs (alternative input).")
+    auth_group.add_argument("-F", "--tokens-file", help="File with one GitHub PAT per line.")
 
     target_group = parser.add_argument_group("Target Selection")
-    target_group.add_argument("--target", help="Target value (domain, user, org, or repo).")
-    target_group.add_argument("--type", choices=["domain", "user", "org", "repo"], help="Target type for --target.")
-    target_group.add_argument("--domain", help="Domain shortcut (example.com).")
-    target_group.add_argument("--user", help="GitHub username shortcut.")
-    target_group.add_argument("--org", help="GitHub org shortcut.")
-    target_group.add_argument("--repo", help="Repository shortcut (owner/repo).")
+    target_group.add_argument("-a", "--target", help="Target value (domain, user, org, or repo).")
+    target_group.add_argument("-Y", "--type", choices=["domain", "user", "org", "repo"], help="Target type for --target.")
+    target_group.add_argument("-d", "--domain", help="Domain shortcut (example.com).")
+    target_group.add_argument("-u", "--user", help="GitHub username shortcut.")
+    target_group.add_argument("-o", "--org", help="GitHub org shortcut.")
+    target_group.add_argument("-r", "--repo", help="Repository shortcut (owner/repo).")
 
     rules_group = parser.add_argument_group("Rules and Patterns")
-    rules_group.add_argument("--patterns", help="Path to JSON file with additional pattern rules.")
-    rules_group.add_argument("--config", help="Alias for --patterns; also supports {custom_patterns:{name:regex}} format.")
+    rules_group.add_argument("-p", "--patterns", help="Path to JSON file with additional pattern rules.")
+    rules_group.add_argument("-f", "--config", help="Alias for --patterns; also supports {custom_patterns:{name:regex}} format.")
     rules_group.add_argument(
+        "-P",
         "--custom-pattern",
         nargs=2,
         action="append",
@@ -2296,71 +2301,79 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     scan_group = parser.add_argument_group("Scan Behavior")
-    scan_group.add_argument("--use-regex-query", action="store_true", help="Try regex-based code search query syntax when supported.")
+    scan_group.add_argument("-q", "--use-regex-query", action="store_true", help="Try regex-based code search query syntax when supported.")
     scan_group.add_argument(
+        "-G",
         "--no-regex-grep",
         action="store_true",
         help="Disable client-side regex grep over GitHub file contents.",
     )
-    scan_group.add_argument("--no-scan-commits", action="store_true", help="Disable scanning recent commit patches.")
-    scan_group.add_argument("--no-scan-prs", action="store_true", help="Disable scanning pull request patches.")
-    scan_group.add_argument("--scan-all-files", action="store_true", help="Enumerate and scan all files in each repository.")
+    scan_group.add_argument("-m", "--no-scan-commits", action="store_true", help="Disable scanning recent commit patches.")
+    scan_group.add_argument("-s", "--no-scan-prs", action="store_true", help="Disable scanning pull request patches.")
+    scan_group.add_argument("-A", "--scan-all-files", action="store_true", help="Enumerate and scan all files in each repository.")
     scan_group.add_argument(
+        "-D",
         "--discover-subdomains",
         action="store_true",
         help="For --domain targets, discover subdomains from GitHub code, metadata, patches, discussions, and release text.",
     )
-    scan_group.add_argument("--max-files-per-repo", type=int, default=5000, help="Max files to scan per repository in --scan-all-files mode.")
-    scan_group.add_argument("--max-file-size-bytes", type=int, default=1000000, help="Skip files larger than this size in bytes.")
+    scan_group.add_argument("-M", "--max-files-per-repo", type=int, default=5000, help="Max files to scan per repository in --scan-all-files mode.")
+    scan_group.add_argument("-B", "--max-file-size-bytes", type=int, default=1000000, help="Skip files larger than this size in bytes.")
     scan_group.add_argument(
+        "-c",
         "--max-commits-per-repo",
         type=int,
         default=30,
         help="Maximum recent commits to inspect per repo for patch-based secret leaks.",
     )
     scan_group.add_argument(
+        "-j",
         "--max-prs-per-repo",
         type=int,
         default=20,
         help="Maximum recent pull requests to inspect per repo for patch-based secret leaks.",
     )
-    scan_group.add_argument("--no-scan-collab-text", action="store_true", help="Disable scanning PR/issue comments and release notes.")
-    scan_group.add_argument("--max-issues-per-repo", type=int, default=30, help="Maximum recent issues to inspect for text-based leaks.")
-    scan_group.add_argument("--max-releases-per-repo", type=int, default=20, help="Maximum recent releases to inspect for text-based leaks.")
+    scan_group.add_argument("-I", "--no-scan-collab-text", action="store_true", help="Disable scanning PR/issue comments and release notes.")
+    scan_group.add_argument("-i", "--max-issues-per-repo", type=int, default=30, help="Maximum recent issues to inspect for text-based leaks.")
+    scan_group.add_argument("-l", "--max-releases-per-repo", type=int, default=20, help="Maximum recent releases to inspect for text-based leaks.")
     scan_group.add_argument(
+        "-w",
         "--fresh-days",
         type=int,
         default=30,
         help="Only scan activity updated in the last N days. Set to 0 to disable freshness filtering.",
     )
     scan_group.add_argument(
+        "-S",
         "--fresh-since",
         help="Only scan activity updated on/after this UTC timestamp (ISO-8601), e.g. 2026-02-01T00:00:00Z.",
     )
     scan_group.add_argument(
+        "-y",
         "--latest-only",
         action="store_true",
         help="Keep only findings from each repo's most recent observed activity timestamp.",
     )
-    scan_group.add_argument("--max-results-per-query", type=int, default=100, help="Max search results to process per query.")
-    scan_group.add_argument("--max-file-fetches", type=int, default=40, help="Fallback file-content API calls if text-matches missing.")
-    scan_group.add_argument("--max-domain-repos", type=int, default=100, help="Max repositories inferred from domain search.")
-    scan_group.add_argument("--min-score", type=int, default=75, help="Minimum confidence score required to keep a finding.")
-    scan_group.add_argument("--relaxed", action="store_true", help="Relax strict false-positive filters.")
+    scan_group.add_argument("-Q", "--max-results-per-query", type=int, default=100, help="Max search results to process per query.")
+    scan_group.add_argument("-X", "--max-file-fetches", type=int, default=40, help="Fallback file-content API calls if text-matches missing.")
+    scan_group.add_argument("-E", "--max-domain-repos", type=int, default=100, help="Max repositories inferred from domain search.")
+    scan_group.add_argument("-n", "--min-score", type=int, default=75, help="Minimum confidence score required to keep a finding.")
+    scan_group.add_argument("-z", "--relaxed", action="store_true", help="Relax strict false-positive filters.")
 
     output_group = parser.add_argument_group("Output")
     output_group.add_argument(
+        "-O",
         "--output",
         help="Output file path. Default is results.json for normal scans; subdomain discovery writes no file unless you set this.",
     )
-    output_group.add_argument("--csv-output", help="Optional additional CSV output file path.")
-    output_group.add_argument("--alert-webhook", help="Optional webhook URL for summarized alerts.")
+    output_group.add_argument("-V", "--csv-output", help="Optional additional CSV output file path.")
+    output_group.add_argument("-H", "--alert-webhook", help="Optional webhook URL for summarized alerts.")
 
     progress_group = parser.add_argument_group("Progress and Cache")
-    progress_group.add_argument("--resume", action="store_true", help="Resume from saved progress file.")
-    progress_group.add_argument("--clear-progress", action="store_true", help="Delete progress file before scanning.")
-    progress_group.add_argument("--progress-file", default=".scan_progress.json", help="Progress state file path.")
-    progress_group.add_argument("--flush", action="store_true", help="Delete cached progress for this target and start from scratch.")
+    progress_group.add_argument("-e", "--resume", action="store_true", help="Resume from saved progress file.")
+    progress_group.add_argument("-K", "--clear-progress", action="store_true", help="Delete progress file before scanning.")
+    progress_group.add_argument("-J", "--progress-file", default=".scan_progress.json", help="Progress state file path.")
+    progress_group.add_argument("-U", "--flush", action="store_true", help="Delete cached progress for this target and start from scratch.")
 
     return parser
 
