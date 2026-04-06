@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Github Recon Scanner
-
-GitHub reconnaissance scanner for public repositories.
-Uses GitHub REST APIs with rate-limit-aware pacing and client-side pattern validation.
+Github Recon Scanner for public repositories.
 """
 
 from __future__ import annotations
