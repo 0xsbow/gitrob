@@ -42,6 +42,26 @@ SAFE_SEARCH_RPM_AUTHENTICATED = 6
 SAFE_SEARCH_RPM_UNAUTHENTICATED = 3
 
 
+class GitHubScannerError(RuntimeError):
+    """Base exception for user-facing scanner failures."""
+
+
+class GitHubApiError(GitHubScannerError):
+    """GitHub API request failed with a handled response."""
+
+
+class GitHubTargetNotFoundError(GitHubApiError):
+    """Requested GitHub org/user/repo does not exist or is inaccessible."""
+
+
+class ScannerNetworkError(GitHubScannerError):
+    """Scanner could not reach a remote service."""
+
+
+class ScannerOutputError(GitHubScannerError):
+    """Scanner could not write or send output."""
+
+
 @dataclass
 class PatternRule:
     name: str
@@ -230,7 +250,13 @@ class GitHubApiClient:
         for attempt in range(self.max_retries + 1):
             self._wait_for_secondary_limit_cooldown()
             limiter.wait_for_slot()
-            resp = self.session.request(method, url, timeout=self.timeout, **kwargs)
+            try:
+                resp = self.session.request(method, url, timeout=self.timeout, **kwargs)
+            except requests.RequestException as exc:
+                raise ScannerNetworkError(
+                    f"Unable to reach the GitHub API while requesting '{path}'. "
+                    "Check network connectivity and try again."
+                ) from exc
             remaining = resp.headers.get("X-RateLimit-Remaining")
             reset_at = resp.headers.get("X-RateLimit-Reset")
             if remaining == "0" and reset_at:
@@ -264,7 +290,7 @@ class GitHubApiClient:
                 return {}
 
             if resp.status_code == 401:
-                raise RuntimeError(
+                raise GitHubApiError(
                     "Authentication failed (401 Bad credentials). "
                     "Check your GitHub token or run without --token."
                 )
@@ -279,9 +305,36 @@ class GitHubApiClient:
                 err_payload = resp.json()
             except Exception:
                 err_payload = {"message": resp.text[:300]}
-            raise RuntimeError(f"GitHub API error {resp.status_code}: {err_payload}")
+            raise self._build_api_error(path, resp.status_code, err_payload)
 
-        raise RuntimeError("Max retries reached for GitHub API request")
+        raise GitHubApiError("GitHub API request failed after multiple retries. Please try again later.")
+
+    def _build_api_error(self, path: str, status_code: int, err_payload: Dict[str, Any]) -> GitHubApiError:
+        message = str(err_payload.get("message") or "").strip()
+
+        if status_code == 404:
+            if path.startswith("/orgs/") and path.endswith("/repos"):
+                org = path[len("/orgs/") : -len("/repos")].strip("/")
+                return GitHubTargetNotFoundError(
+                    f"GitHub organization '{org}' was not found or is not accessible."
+                )
+            if path.startswith("/users/") and path.endswith("/repos"):
+                user = path[len("/users/") : -len("/repos")].strip("/")
+                return GitHubTargetNotFoundError(
+                    f"GitHub user '{user}' was not found or has no accessible public repositories."
+                )
+            if "/repos/" in path:
+                repo = path.split("/repos/", 1)[1].strip("/")
+                return GitHubTargetNotFoundError(
+                    f"GitHub repository '{repo}' was not found or is not accessible."
+                )
+
+        if status_code == 403 and message:
+            return GitHubApiError(f"GitHub API access denied (403): {message}")
+
+        if message:
+            return GitHubApiError(f"GitHub API error {status_code}: {message}")
+        return GitHubApiError(f"GitHub API error {status_code}.")
 
     def list_org_repos(self, org: str) -> List[str]:
         return self._paginate_repo_names(f"/orgs/{org}/repos", params={"type": "public", "per_page": 100})
@@ -2152,9 +2205,16 @@ def send_alerts(webhook_url: str, findings: List[Dict[str, Any]], top_n: int = 1
         "top_findings": findings[:top_n],
         "generated_at_utc": datetime.now(tz=timezone.utc).isoformat(),
     }
-    resp = requests.post(webhook_url, json=payload, timeout=20)
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=20)
+    except requests.RequestException as exc:
+        raise ScannerOutputError(
+            "Alert delivery failed because the webhook endpoint could not be reached."
+        ) from exc
     if resp.status_code >= 300:
-        raise RuntimeError(f"Alert webhook returned {resp.status_code}: {resp.text[:250]}")
+        raise ScannerOutputError(
+            f"Alert delivery failed because the webhook returned HTTP {resp.status_code}."
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2368,6 +2428,21 @@ def print_unauthenticated_restrictions() -> None:
     )
 
 
+def print_invalid_token_response() -> None:
+    print(
+        "Invalid GitHub token provided.\n"
+        "Check your GitHub token and try again."
+    )
+
+
+def format_cli_error(exc: Exception, fallback: str = "Scanner operation failed.") -> str:
+    if isinstance(exc, GitHubScannerError):
+        return str(exc)
+    if isinstance(exc, requests.RequestException):
+        return "A network error occurred while contacting a remote service."
+    return fallback
+
+
 def build_finding_url(finding: Dict[str, Any]) -> str:
     base = finding.get("html_url") or ""
     repo = finding.get("repo") or ""
@@ -2510,15 +2585,19 @@ def main() -> int:
     if args.progress_file == ".scan_progress.json":
         # Preserve backwards-compatible default behavior while enabling per-target cache.
         progress_file = auto_progress_file
-    Path(progress_file).parent.mkdir(parents=True, exist_ok=True)
+    try:
+        Path(progress_file).parent.mkdir(parents=True, exist_ok=True)
 
-    if args.flush and os.path.exists(progress_file):
-        os.remove(progress_file)
-        LOG.info("Flushed cache file: %s", progress_file)
+        if args.flush and os.path.exists(progress_file):
+            os.remove(progress_file)
+            LOG.info("Flushed cache file: %s", progress_file)
 
-    if args.clear_progress and os.path.exists(progress_file):
-        os.remove(progress_file)
-        LOG.info("Cleared progress file: %s", progress_file)
+        if args.clear_progress and os.path.exists(progress_file):
+            os.remove(progress_file)
+            LOG.info("Cleared progress file: %s", progress_file)
+    except OSError as exc:
+        print(f"Progress file setup failed: {exc}")
+        return 1
 
     candidate_tokens = collect_candidate_tokens(args)
     client: Optional[GitHubApiClient] = None
@@ -2526,6 +2605,7 @@ def main() -> int:
     auth_mode = "unauthenticated"
     selected_token = None
     valid_tokens: List[str] = []
+    invalid_token_count = 0
     try:
         for token in candidate_tokens:
             probe = GitHubApiClient(
@@ -2547,23 +2627,27 @@ def main() -> int:
                 valid_tokens.append(token)
                 auth_mode = "authenticated"
                 break
-            except RuntimeError as exc:
+            except GitHubScannerError as exc:
                 if "401" in str(exc):
                     LOG.error("Skipping invalid/expired token.")
+                    invalid_token_count += 1
                     continue
                 LOG.error("Token probe failed: %s", exc)
                 continue
 
         if client is None:
+            if candidate_tokens and invalid_token_count == len(candidate_tokens):
+                print_invalid_token_response()
+                return 1
             client = GitHubApiClient(
                 token=None,
                 requests_per_minute=args.requests_per_minute,
             )
             try:
                 rate = client.get_rate_limit()
-            except RuntimeError as exc:
+            except GitHubScannerError as exc:
                 LOG.error("Failed to access GitHub API: %s", exc)
-                print(f"Failed to access GitHub API: {exc}")
+                print(f"Failed to access GitHub API: {format_cli_error(exc, 'GitHub API access failed.')}")
                 return 1
         else:
             # Keep all valid tokens for runtime failover.
@@ -2577,7 +2661,7 @@ def main() -> int:
                 try:
                     probe.get_rate_limit()
                     valid_tokens.append(token)
-                except RuntimeError:
+                except GitHubScannerError:
                     continue
     except KeyboardInterrupt:
         print("Scan interrupted by user (Ctrl+C). Exiting safely.")
@@ -2657,7 +2741,7 @@ def main() -> int:
                 save_progress(progress_file, partial, [])
             save_requested_outputs(partial, output_path, args.csv_output)
             return 130
-        except RuntimeError as exc:
+        except GitHubScannerError as exc:
             partial = scanner._last_subdomain_results or findings
             if partial:
                 if should_save_subdomain_cache:
@@ -2672,7 +2756,7 @@ def main() -> int:
                         "Retry later or use --token, --tokens, or --tokens-file for higher limits."
                     )
             else:
-                print(f"Subdomain discovery failed: {exc}")
+                print(f"Subdomain discovery failed: {format_cli_error(exc, 'The scanner could not complete subdomain discovery.')}")
             return 1
         if args.verbose:
             print_findings_to_console(findings, verbose=True)
@@ -2681,19 +2765,24 @@ def main() -> int:
         return 0
 
     repos: List[str]
-    if target_type == "repo":
-        repos = [target_value]
-    elif target_type == "org":
-        repos = client.list_org_repos(target_value)
-    elif target_type == "user":
-        repos = client.list_user_repos(target_value)
-    elif target_type == "domain":
-        repos = client.search_repos_by_domain(target_value, limit=args.max_domain_repos)
-    else:
-        raise ValueError(f"Unsupported target type: {target_type}")
+    try:
+        if target_type == "repo":
+            repos = [target_value]
+        elif target_type == "org":
+            repos = client.list_org_repos(target_value)
+        elif target_type == "user":
+            repos = client.list_user_repos(target_value)
+        elif target_type == "domain":
+            repos = client.search_repos_by_domain(target_value, limit=args.max_domain_repos)
+        else:
+            raise ValueError(f"Unsupported target type: {target_type}")
+    except GitHubScannerError as exc:
+        print(f"Target resolution failed: {exc}")
+        return 1
 
     if not repos:
         LOG.warning("No repositories found for target %s (%s)", target_value, target_type)
+        print(f"No accessible repositories found for {target_type} '{target_value}'.")
         return 0
 
     LOG.info("Resolved %d repositories for scan", len(repos))
@@ -2729,7 +2818,7 @@ def main() -> int:
             LOG.info("Scanning repository %d/%d: %s", idx, len(remaining_repos), repo)
             try:
                 repo_findings = scanner.scan_repo(repo)
-            except RuntimeError as exc:
+            except GitHubScannerError as exc:
                 # Safe token failover for invalid/failed credentials. Not used to evade rate limits.
                 if "401" in str(exc) or "Authentication failed" in str(exc):
                     LOG.warning("Active token failed; attempting failover to next valid token.")
@@ -2749,7 +2838,7 @@ def main() -> int:
                             switched = True
                             LOG.info("Token failover successful. Retrying repo: %s", repo)
                             break
-                        except RuntimeError:
+                        except GitHubScannerError:
                             continue
                     if not switched:
                         # Fallback to unauthenticated mode rather than crashing with traceback.
@@ -2763,14 +2852,20 @@ def main() -> int:
                         LOG.warning("No valid token available. Falling back to unauthenticated mode.")
                     try:
                         repo_findings = scanner.scan_repo(repo)
-                    except RuntimeError as retry_exc:
-                        print(f"Failed scanning {repo}: {retry_exc}")
+                    except GitHubScannerError as retry_exc:
+                        print(
+                            f"Failed scanning {repo}: "
+                            f"{format_cli_error(retry_exc, 'The repository scan could not be completed.')}"
+                        )
                         partial = dedup_findings(all_findings, latest_only=args.latest_only)
                         save_progress(progress_file, partial, completed_repos)
                         save_requested_outputs(partial, args.output, args.csv_output)
                         return 1
                 else:
-                    print(f"Failed scanning {repo}: {exc}")
+                    print(
+                        f"Failed scanning {repo}: "
+                        f"{format_cli_error(exc, 'The repository scan could not be completed.')}"
+                    )
                     partial = dedup_findings(all_findings, latest_only=args.latest_only)
                     save_progress(progress_file, partial, completed_repos)
                     save_requested_outputs(partial, args.output, args.csv_output)
@@ -2785,7 +2880,11 @@ def main() -> int:
         save_requested_outputs(partial, args.output, args.csv_output)
         return 130
     except Exception as exc:
-        print(f"Scan stopped due to error: {exc}. Saving partial results and cache...")
+        print(
+            "Scan stopped due to an internal scanner error. "
+            "Saving partial results and cache..."
+        )
+        LOG.exception("Unhandled scanner failure during repository scan: %s", exc)
         partial = dedup_findings(all_findings, latest_only=args.latest_only)
         save_progress(progress_file, partial, completed_repos)
         save_requested_outputs(partial, args.output, args.csv_output)
@@ -2803,8 +2902,12 @@ def main() -> int:
     elif not findings:
         print("No findings detected.")
     if args.alert_webhook:
-        send_alerts(args.alert_webhook, findings)
-        LOG.info("Alert webhook sent to %s", args.alert_webhook)
+        try:
+            send_alerts(args.alert_webhook, findings)
+            LOG.info("Alert webhook sent to %s", args.alert_webhook)
+        except GitHubScannerError as exc:
+            print(f"Scan completed, but alert delivery failed: {format_cli_error(exc, 'Unable to send the alert webhook.')}")
+            return 1
     return 0
 
 
@@ -2814,3 +2917,10 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nScan interrupted by user (Ctrl+C). Exiting safely.")
         raise SystemExit(130)
+    except GitHubScannerError as exc:
+        print(f"Scanner error: {exc}")
+        raise SystemExit(1)
+    except Exception as exc:
+        LOG.exception("Unexpected top-level scanner failure: %s", exc)
+        print("Unexpected scanner error. Run with --verbose for more details.")
+        raise SystemExit(1)
