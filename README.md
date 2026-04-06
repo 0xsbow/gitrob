@@ -123,6 +123,6 @@ Alternate config format (compatible with `--config` / `-f`):
 
 ## Responsible Use
 
-- Scan only authorized targets and public data.
-- Follow bug bounty scope and GitHub Terms of Service.
+- Scan only authorized targets. 
+- Follow GitHub Terms of Service.
 - Keep concurrency and RPM low to avoid abuse flags.
